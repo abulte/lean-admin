@@ -37,11 +37,11 @@ export default {
     }
   },
   methods: {
-    login () {
-      this.$dgfAuth.login()
+    async login () {
+      await this.$dgfAuth.login()
     },
-    logout () {
-      this.$dgfAuth.logout()
+    async logout () {
+      await this.$dgfAuth.logout()
       this.isAuthenticated = false
       this.me = ''
     }

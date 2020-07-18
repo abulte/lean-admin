@@ -4,6 +4,8 @@ class AuthLib {
     this.http = http
     const protocol = this.options.protocol || 'https'
     this.serverURL = `${protocol}://${this.options.domain}`
+    this.state = 'f2d81a260dea8a100dd517984e53c56'
+    this.code_verifier = 'd14a30a27e77370585e078ad7cff6b139254983e3e28825ca0077f49' // Not random for dev purpose
   }
 
   _getBaseUrl () {
@@ -16,49 +18,65 @@ class AuthLib {
     return !!localStorage.dgfToken
   }
 
-  /**
-   * Handle the response from the login workflow
-   */
-  receive () {
-    return new Promise((resolve, reject) => {
-      const hash = new URLSearchParams(window.location.hash.replace('#', ''))
-      if (!hash.has('access_token')) {
-        return reject(new Error('No token found'))
+  async retrieveToken () {
+    const clientId = this.options.clientId
+    const clientSecret = this.options.clientSecret
+    const headerStr = btoa(`${clientId}:${clientSecret}`)
+
+    const queryDict = {}
+    window.location.search.substr(1).split('&').forEach(function (item) { queryDict[item.split('=')[0]] = item.split('=')[1] })
+    const code = queryDict.code
+    // const state = queryDict.state
+
+    const response = await this.http.post(
+      `${this.serverURL}/oauth/token`,
+      {
+        grant_type: 'authorization_code',
+        code: code,
+        code_verifier: this.code_verifier,
+        redirect_uri: `${this._getBaseUrl()}${this.options.redirect}`
+      },
+      {
+        headers: {
+          Authorization: `Basic ${headerStr}`
+        },
+        emulateJSON: true
       }
-      localStorage.dgfToken = hash.get('access_token')
-      if (hash.has('expires_in')) {
-        localStorage.dgfTokenExpires = (new Date()).getTime() + parseInt(hash.get('expires_in')) * 1000
-      }
-      return this.http.get(`${this.serverURL}/api/1/me/`).then(resolve, reject)
-    })
+    )
+    console.log(response.body.access_token)
+    localStorage.dgfToken = response.body.access_token
   }
 
   /**
    * Launches the login workflow
    */
-  login (state) {
-    state = state ? JSON.stringify(state) : JSON.stringify({})
-    state = encodeURIComponent(state)
+  async login () {
+    const codeChallenge = await pkceChallengeFromVerifier(this.code_verifier)
+    const urlCodeChallenge = encodeURIComponent(codeChallenge)
     const redirectURI = encodeURIComponent(`${this._getBaseUrl()}${this.options.redirect}`)
-    const serverURL = `${this.serverURL}/fr/oauth/authorize`
-    const clientId = this.options.clientId
-    window.location = `${serverURL}?redirect_uri=${redirectURI}&response_type=token&client_id=${clientId}&scope=default&grant_type=implicit&state=${state}`
+    const state = encodeURIComponent(this.state)
+    const serverURL = `${this.serverURL}/oauth/authorize`
+    const clientId = encodeURIComponent(this.options.clientId)
+
+    const urlLogin = `${serverURL}?redirect_uri=${redirectURI}&response_type=code&client_id=${clientId}&scope=default&state=${state}&code_challenge=${urlCodeChallenge}&code_challenge_method=S256`
+    console.log(urlLogin)
+    window.location = urlLogin
   }
 
   /**
    * Deletes the local token and revoke it from the server
    * FIXME: does not work on server side (probably because missing @csrf.exempt)
    */
-  logout () {
-    return new Promise((resolve, reject) => {
-      const serverURL = `${this.serverURL}/oauth/revoke/`
-      this.http.post(serverURL, { token: localStorage.dgfToken }, { emulateJSON: true })
-        .then(resolve, reject)
-        .finally(() => {
-          delete localStorage.dgfToken
-          delete localStorage.dgfTokenExpires
-        })
-    })
+  async logout () {
+    const serverURL = `${this.serverURL}/oauth/revoke/`
+    try {
+      await this.http.post(serverURL, { token: localStorage.dgfToken }, { emulateJSON: true })
+    } catch (error) {
+      console.log('error', error)
+    } finally {
+      delete localStorage.dgfToken
+      delete localStorage.dgfTokenExpires
+    }
   }
 }
 
@@ -82,6 +100,22 @@ const DGFAuth = {
 }
 
 export default DGFAuth
+
+function sha256 (plain) {
+  const encoder = new TextEncoder()
+  const data = encoder.encode(plain)
+  return window.crypto.subtle.digest('SHA-256', data)
+}
+
+function base64urlencode (str) {
+  return btoa(String.fromCharCode.apply(null, new Uint8Array(str)))
+    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+}
+
+async function pkceChallengeFromVerifier (v) {
+  const hashed = await sha256(v)
+  return base64urlencode(hashed)
+}
 
 // Automatic installation if Vue has been added to the global scope.
 if (typeof window !== 'undefined' && window.Vue) {

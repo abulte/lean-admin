@@ -9,14 +9,13 @@ export default {
   name: 'Login',
   components: {
   },
-  mounted () {
-    this.$dgfAuth.receive().then(res => {
-      console.log('logged in')
-    }).catch(err => {
-      console.log('error', err)
-    }).finally(() => {
+  async mounted () {
+    try {
+      await this.$dgfAuth.retrieveToken()
       this.$router.push('/')
-    })
+    } catch (ex) {
+      console.log('error', ex)
+    }
   }
 }
 </script>
